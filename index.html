@@ -1,0 +1,230 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>reveal.js</title>
+
+		<link rel="stylesheet" href="dist/reset.css">
+		<link rel="stylesheet" href="dist/reveal.css">
+		<link rel="stylesheet" href="dist/theme/black.css">
+
+		<!-- Theme used for syntax highlighted code -->
+		<link rel="stylesheet" href="plugin/highlight/monokai.css">
+	  <link rel="stylesheet" href="css/print/pdf.css" media="print">
+	</head>
+	<body>
+		<div class="reveal">
+			<div class="slides">
+				<section class="title-slide">
+    <h1>ClickHouse optimizations for Arm</h1>
+    Daniel Kutenin
+    <p><s>Google</s></p>
+</section>
+				<section data-auto-animate>
+					<h2 style="margin-top: -200px;">Who am I?</h2>
+					<ul>
+						<li>Senior Software Engineer at Google Cloud</li>
+						<li data-id="ch">ClickHouse infra and efficiency contributor</li>
+						<li>C++ library and compiler contributor</li>
+						<li>C++ teacher in universities</li>
+					</ul>
+				</section>
+				<section data-background="media/no_cloud.svg"></section>
+				<section><h1>BUT</h1></section>
+				<section data-background="media/gcloud_arm.jpg"></section>
+				<section>
+					<video data-autoplay src="media/Google_Cloud_ARM.webm"></video>
+					<A href=https://cloud.google.com/blog/products/compute/tau-t2a-is-first-compute-engine-vm-on-an-arm-chip>https://cloud.google.com/blog/products/compute/tau-t2a-is-first-compute-engine-vm-on-an-arm-chip</A>
+				</section>
+				<section data-auto-animate>
+					<h2 style="margin-top: -200px;">Who am I?</h2>
+					<ul>
+						<li>Senior Software Engineer at Google Cloud</li>
+						<li data-id="ch">ClickHouse infra and efficiency contributor</li>
+						<li>C++ library and compiler contributor</li>
+						<li>C++ teacher in universities</li>
+					</ul>
+				</section>
+				<section data-auto-animate>
+					<ul>
+						<li data-id="ch">ClickHouse infra and <text data-id="eff">efficiency</text> contributor</li>
+					</ul>
+				</section>
+				<section data-auto-animate><li data-id="ch"><text data-id="eff">efficiency</text></li></section>
+				<section data-auto-animate>
+					<h2 style="margin-top: -200px;">Why Arm?</h2>
+					<ul style="list-style-type:none">
+						<li class="fragment" data-fragment-index="1">💰 15-20%* cost reduction of perf/$</li>
+						<li class="fragment" data-fragment-index="2">☁️ Cloud providers finally "believed" in it</li>
+						<li class="fragment" data-fragment-index="3">🧰 AWS, Azure, GCloud, Oracle, Alibaba, etc</li>
+						<li class="fragment" data-fragment-index="4">🏢 Corporations (Apple, Google, Amazon, Microsoft)</li>
+						<li class="fragment" data-fragment-index="5">⌚ Arm managed to make competition to Intel/AMD</li>
+					</ul>
+				</section>
+				<section data-auto-animate>
+					<h2>Technical reasons <text style="color:green;">(pros)</h2>
+					<ul style="list-style-type:squares">
+						<li class="fragment" data-fragment-index="1">
+							Easier to develop (committee vs corp)
+							<ul>
+								<li class="fragment" data-fragment-index="3">Proposal are open (SVE, memory tagging, etc)</li>
+								<li class="fragment" data-fragment-index="4">Google <A href=https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/arm-a-profile-architecture-developments-2021>got</A> instructions for memcpy into Armv8.8</li>
+							</ul>
+						</li>
+						<li class="fragment" data-fragment-index="5">
+							Less legacy <text style="color:yellow;">(this will end)</text>
+							<ul>
+								<li class="fragment" data-fragment-index="6">4 byte instructions (decoder is easier)</li>
+								<li class="fragment" data-fragment-index="7">More registers, less moves</li>
+								<li class="fragment" data-fragment-index="8">Easier architecture</li>
+							</ul>
+						</li>
+						<li class="fragment" data-fragment-index="9"><b>Software has gaps</b></li>
+					</ul>
+				</section>
+				<section>
+					<h2>ClickHouse is awful</h2>
+					<image src="media/awful_simd.png"></image>
+				</section>
+				<section>
+						I am one of the authors for much code of this sort
+				</section>
+				<section>
+						<p>ClickHouse is column based, it's basically a huge array of bytes. SIMD is great</p>
+						<image src="media/columns.png"></image>
+				</section>
+				<section>
+					<h2>ClickHouse is 28% faster over 4 years</h2>
+					<image src="media/some_red_green.webp"></image>
+					<A href="https://clickhouse.com/blog/clickhouse-over-the-years-with-benchmarks">https://clickhouse.com/blog/clickhouse-over-the-years-with-benchmarks</A>
+				</section>
+				<section>
+					<h2>It's hard to learn SIMD</h2>
+					<ul>
+						<li>Over a decade Intel was publishing SIMD guides</li>
+						<li>Arm did nothing</li>
+					</ul>
+				</section>
+				<section>
+					<h2>We fixed the glitch!</h2>
+					<ul>
+						<li>We learned Arm NEON SIMD by heart</li>
+						<li>Will publish some software guides soon</li>
+					</ul>
+				</section>
+				<section data-auto-animate>
+					<h2>Situation is appalling</h2>
+				</section>
+				<section data-auto-animate>
+					<h2>Situation is appalling</h2>
+					<h2>Ready?</h2>
+				</section>
+				<section>
+						<image src="media/movemask.png"></image>
+
+						PMOVMSKB is an x86 instruction to move from vector to scalar. 1 cycle
+				</section>
+				<section>
+						<h2>Arm does not have anything like that</h2>
+				</section>
+				<section> Migration emulation takes 12 cycles!
+<pre><code class="cpp">int _mm_movemask_epi8(__m128i a) {
+    uint8x16_t input = vreinterpretq_u8_m128i(a);
+    uint16x8_t high_bits =
+    		vreinterpretq_u16_u8(vshrq_n_u8(input, 7));
+    uint32x4_t paired16 =
+        vreinterpretq_u32_u16(
+        		vsraq_n_u16(high_bits, high_bits, 7));
+    uint64x2_t paired32 =
+        vreinterpretq_u64_u32(
+        		vsraq_n_u32(paired16, paired16, 14));
+    uint8x16_t paired64 =
+        vreinterpretq_u8_u64(
+        		vsraq_n_u64(paired32, paired32, 28));
+    return vgetq_lane_u8(paired64, 0) |
+    				((int) vgetq_lane_u8(paired64, 8) << 8);
+}
+</code></pre>
+				</section>
+				<section>
+					<h3>We found similar ways to emulate through instruction no one cared before: shift right and narrow</h3>
+				</section>
+				<section>
+					<video data-autoplay src="media/shrn.webm"></video>
+				</section>
+				<section>
+					It's almost a bit mask but with groups of 4
+					<image src="media/similar.png"></image>
+				</section>
+				<section>
+					<h1>Results</h1>
+				</section>
+				<section>
+					<image src="media/zstd.png"></image>
+					ZSTD <text style="color:green;">5%</text> for compression
+				</section>
+				<section>
+					<image src="media/strlen.png" width=50%></image>
+					<p><text style="color:green;">10%</text> for byte search (yes, C standard library)</p>
+				</section>
+				<section>
+					<image src="media/hashtables.png" width=130%></image>
+					<p><text style="color:green;">3-8%</text> for hashtables</p>
+				</section>
+				<section>
+					<image src="media/ch.png"></image>
+					<p>Lots of places in ClickHouse <a href="https://github.com/ClickHouse/ClickHouse/pull/38093/">PR #38093</a></p>
+				</section>
+				<section>
+					<image src="media/clickhouse_1.jpeg"></image>
+				</section>
+				<section>
+					<image src="media/clickhouse_2.jpeg"></image>
+				</section>
+				<section>
+					<image src="media/clickhouse_3.jpeg"></image>
+				</section>
+				<section>
+					<image src="media/clickhouse_4.jpeg"></image>
+				</section>
+				<section>
+					Overall: <text style="color:green;">1-1.5%</text> for all queries. <text style="color:green;">10-15%</text> for string processing. Also: compiler flags, better branching, etc.
+				</section>
+				<section>
+					Future: SVE, more optimizations, software guides. Gap in software is huge
+				</section>
+				<section>
+					Thanks
+				</section>
+			</div>
+		</div>
+
+		<script src="dist/reveal.js"></script>
+		<script src="plugin/notes/notes.js"></script>
+		<script src="plugin/markdown/markdown.js"></script>
+		<script src="plugin/highlight/highlight.js"></script>
+		<script src="plugin/math/math.js"></script>
+		<script>
+			// More info about initialization & config:
+			// - https://revealjs.com/initialization/
+			// - https://revealjs.com/config/
+			Reveal.configure({ pdfMaxPagesPerSlide: 1 })
+			Reveal.configure({ pdfSeparateFragments: false });
+
+			Reveal.initialize({
+				hash: true,
+				slideNumber: 'c/t',
+				// Learn about plugins: https://revealjs.com/plugins/
+				math: {
+		      mathjax: 'https://cdn.jsdelivr.net/gh/mathjax/mathjax@2.7.8/MathJax.js',
+		      config: 'TeX-AMS_HTML-full',
+		      // pass other options into `MathJax.Hub.Config()`
+		      TeX: { Macros: { RR: "{\\bf R}" } }
+		    },
+				plugins: [ RevealMarkdown, RevealHighlight, RevealNotes, RevealMath ]
+			});
+		</script>
+	</body>
+</html>
